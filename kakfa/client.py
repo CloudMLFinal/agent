@@ -1,13 +1,15 @@
+import json
+
 from kafka import KafkaConsumer
 import logging
 
 host = "localhost"
-port = 29092
+port = 30902
 
 # Configure logging with more detailed format
 logging.basicConfig(
     level=logging.INFO,  # Changed to DEBUG level for more detailed logs
-    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'
+    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
 )
 logger = logging.getLogger(__name__)
 
@@ -44,9 +46,9 @@ def start_consuming(topic_name, group_id=None):
     try:
         for message in consumer:
             try:
-                logger.info(f"Received message: {message.value}")
+                parsed_message = json.loads(message.value.decode('utf-8'))
+                print(parsed_message)
                 #TODO: Process your message here
-
 
             except Exception as e:
                 logger.error(f"Error processing message: {str(e)}")
