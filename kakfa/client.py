@@ -1,15 +1,8 @@
 from kafka import KafkaConsumer
-from kafka.errors import KafkaError, NoBrokersAvailable
-import json
 import logging
-import socket
-import time
 
-# Force IPv4
-socket.getaddrinfo('localhost', None, socket.AF_INET)
-
-host = "127.0.0.1"  # Explicitly using IPv4 localhost
-port = 37083
+host = "localhost"
+port = 29092
 
 # Configure logging with more detailed format
 logging.basicConfig(
@@ -28,17 +21,11 @@ def create_kafka_consumer(topic_name, group_id=None):
     try:
         consumer = KafkaConsumer(
             topic_name,
+            group_id=group_id,
             bootstrap_servers=[f'{host}:{port}'],
             auto_offset_reset='earliest',
-            enable_auto_commit=True,
-            value_deserializer=lambda x: json.loads(x.decode('utf-8')),
-            security_protocol="PLAINTEXT",
-            api_version_auto_timeout_ms=10000,
-            request_timeout_ms=15000,  # Increased request timeout
-            session_timeout_ms=10000,
-            heartbeat_interval_ms=3000
+            enable_auto_commit=True
         )
-
         logger.info(f"Successfully connected to Kafka broker at {host}:{port}")
         return consumer
     except Exception as e:
@@ -58,8 +45,9 @@ def start_consuming(topic_name, group_id=None):
         for message in consumer:
             try:
                 logger.info(f"Received message: {message.value}")
-                # Process your message here
-                # You can add your custom processing logic
+                #TODO: Process your message here
+
+
             except Exception as e:
                 logger.error(f"Error processing message: {str(e)}")
                 continue
