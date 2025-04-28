@@ -6,5 +6,6 @@ import os
 logger = logging.getLogger()
 
 if __name__ == "__main__":
-    TOPIC_NAME = "cloudml-logs"
-    start_consuming(TOPIC_NAME)
+    TOPIC = "cloudml-logs"
+    logger.info(f"Starting consumer with topic: {TOPIC}")
+    start_consuming(TOPIC)
