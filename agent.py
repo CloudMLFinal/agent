@@ -22,7 +22,7 @@ class CodeFixer:
         self.error_file = error_file
         self.repo_url = "https://github.com/CloudMLFinal/example-app.git"
         self.repo_dir = Path("example-app")
-        self.api_key = "sk-e784bd0529d4429fa8756c69e745aeb1"
+        self.api_key = "api-keys"
         
         # Path mapping rules (container path -> local path)
         self.path_mapping = {
