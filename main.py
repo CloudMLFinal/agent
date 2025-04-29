@@ -25,6 +25,7 @@ if __name__ == "__main__":
         start_consuming(args.topic)
     else:
         logger.info(f"Starting pod log monitoring in namespace: {args.namespace}")
+        
         watch_pod_logs(
             namespace=args.namespace,
             label_selector=args.selector,
