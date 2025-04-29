@@ -192,10 +192,18 @@ def watch_pod_logs(namespace, label_selector=None):
             # log line buffer
             log_line_buffer: List[str] = []
             
+            def packeage_log(log: str, metadata: Dict[str, Any]):
+                return {
+                    "log_raw": log,
+                    "metadata": metadata,
+                }
+            
             def flush_log_line_buffer():
                 if log_line_buffer:
                     joined_lines = "\n".join(log_line_buffer)
                     print(f"{namespace}/{self.container}: {joined_lines}")
+                    pkg = packeage_log(joined_lines, self.pod_metadata)
+                    print(pkg)
                     log_line_buffer.clear()
             
             # Main monitoring loop
