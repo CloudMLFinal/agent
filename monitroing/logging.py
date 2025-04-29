@@ -96,7 +96,6 @@ def watch_pod_logs(namespace, label_selector=None):
             for line in logs_stream:
                 if not line:
                     continue
-
                 try:
                     log_line = line.decode('utf-8').rstrip()
                     # 添加时间戳
@@ -114,21 +113,15 @@ def watch_pod_logs(namespace, label_selector=None):
                             colored_line = f"{Colors.GREEN}{log_line}{Colors.ENDC}"
                         elif level == 'DEBUG':
                             colored_line = f"{Colors.BLUE}{log_line}{Colors.ENDC}"
-
                     print(f"[{timestamp}] {namespace}/{pod_name}/{container}: {colored_line}")
-
                 except UnicodeDecodeError:
                     # 处理二进制日志
                     print(f"[{timestamp}] {namespace}/{pod_name}/{container}: [二进制日志数据]")
 
-            # 如果不是跟踪模式，日志读取结束后会退出流
-            if not follow:
-                print(f"{Colors.HEADER}已完成读取 {namespace}/{pod_name}/{container} 的日志{Colors.ENDC}")
-
         except client.rest.ApiException as e:
-            print(f"❌ 读取日志时出错 ({namespace}/{pod_name}/{container}): {e}")
+            print(f"❌ Error when monitoring log ({namespace}/{pod_name}/{container}): {e}")
         except Exception as e:
-            print(f"❌ 监听日志时发生未知错误: {e}")
+            print(f"❌ Unknown Error: {e}")
 
     # 为每个 pod 创建一个线程来监听日志
     threads = []
