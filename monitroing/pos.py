@@ -2,14 +2,14 @@ import json
 import os
 
 # if not have pos folder, create it
-if not os.path.exists("pos"):
-    os.makedirs("pos")
+if not os.path.exists(".pos"):
+    os.makedirs(".pos")
 
 class PosPointer:
     def __init__(self, id):
         self.id = id
         self.pos = 0
-        self.file_path = f"pos/{id}.json"
+        self.file_path = f".pos/{id}.json"
         
         if not os.path.exists(self.file_path):
             with open(self.file_path, "w") as f:
