@@ -187,6 +187,17 @@ def watch_pod_logs(namespace, label_selector=None):
             # Set up a regular expression to identify log levels
             log_level_pattern = re.compile(r'\b(ERROR|WARN|INFO|DEBUG)\b', re.IGNORECASE)
             
+            # multiline
+            log_prefix_pattern = re.compile(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} -')
+            # log line buffer
+            log_line_buffer: List[str] = []
+            
+            def flush_log_line_buffer():
+                if log_line_buffer:
+                    joined_lines = "\n".join(log_line_buffer)
+                    print(f"{namespace}/{self.container}: {joined_lines}")
+                    log_line_buffer.clear()
+            
             # Main monitoring loop
             while not self._stop_event.is_set():
                 try:
@@ -199,7 +210,6 @@ def watch_pod_logs(namespace, label_selector=None):
                         since_seconds=None if self.pos_pointer.pos == 0 else int(datetime.now().timestamp() - self.pos_pointer.pos),
                         _preload_content=False
                     )
-
                     print(f"{Colors.GREEN}Successfully connected to log stream for {namespace}/{pod_name}/{self.container}{Colors.ENDC}")
 
                     # Read log stream in non-blocking mode
@@ -211,10 +221,15 @@ def watch_pod_logs(namespace, label_selector=None):
                                 line = self.logs_stream.readline()
                                 if not line:
                                     # If no new logs, continue the loop
+                                    flush_log_line_buffer()
                                     continue
                                 try:
-                                    log_line = line.decode('utf-8').rstrip()
+                                    log_line: str = line.decode('utf-8').rstrip()
+                                    
                                     # Set color based on log level
+                                    if log_prefix_pattern.match(log_line):
+                                        flush_log_line_buffer()
+                                    
                                     colored_line = log_line
                                     match = log_level_pattern.search(log_line)
                                     if match:
@@ -223,9 +238,7 @@ def watch_pod_logs(namespace, label_selector=None):
                                             colored_line = f"{Colors.ERROR}{log_line}{Colors.ENDC}"
                                         elif level == 'WARN':
                                             colored_line = f"{Colors.WARNING}{log_line}{Colors.ENDC}"
-                                        else:
-                                            continue
-                                    print(f"{namespace}/{self.container}: {colored_line}")
+                                    log_line_buffer.append(colored_line)
                                 except UnicodeDecodeError:
                                     # Handle binary logs
                                     print(f"{namespace}/{self.container}: [Binary log data]")
@@ -238,6 +251,7 @@ def watch_pod_logs(namespace, label_selector=None):
                                     time.sleep(0.5)
                         else:
                             # Timeout, continue loop
+                            flush_log_line_buffer()
                             continue
                             
                 except client.ApiException as e:
