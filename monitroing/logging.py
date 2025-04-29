@@ -16,6 +16,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+threads = []
+v1: client.CoreV1Api()
 
 # Color codes for terminal output
 class Colors:
@@ -28,6 +30,7 @@ class Colors:
 
 
 def watch_pod_logs(namespace, label_selector=None):
+    global v1
     """
     Kubernetes logging monitor
     参数:
@@ -70,82 +73,90 @@ def watch_pod_logs(namespace, label_selector=None):
         print(f"❌ 无法获取 Pod 列表: {e}")
         sys.exit(1)
 
+    class LogWorker(threading.Thread):
+        def __init__(self, pod, container):
+            super().__init__()
+            self.pod = pod
+            self.container = container
 
-    def stream_logs(pod, container=None):
-        pod_name = pod.metadata.name
+        def run(self):
+            self.stream_logs(self.pod, self.container)
 
-        # 如果未指定容器，则使用第一个容器
-        if not container and pod.spec.containers:
-            container = pod.spec.containers[0].name
+        def stream_logs(pod, container=None):
+            pod_name = pod.metadata.name
 
-        print(f"{Colors.HEADER}开始监听 {namespace}/{pod_name}/{container} 的日志...{Colors.ENDC}")
+            # 如果未指定容器，则使用第一个容器
+            if not container and pod.spec.containers:
+                logger.error(f'未指定容器')
+                return
 
-        try:
-            # 创建日志流
-            logs_stream = v1.read_namespaced_pod_log(
-                name=pod_name,
-                namespace=namespace,
-                container=container,
-                follow=True,
-                _preload_content=False
-            )
+            print(f"{Colors.HEADER}开始监听 {namespace}/{pod_name}/{container} 的日志...{Colors.ENDC}")
 
-            # 设置一个正则表达式来识别日志级别
-            log_level_pattern = re.compile(r'\b(ERROR|WARN|INFO|DEBUG)\b', re.IGNORECASE)
+            try:
+                # 创建日志流
+                logs_stream = v1.read_namespaced_pod_log(
+                    name=pod_name,
+                    namespace=namespace,
+                    container=container,
+                    follow=True,
+                    _preload_content=False
+                )
 
-            for line in logs_stream:
-                if not line:
-                    continue
-                try:
-                    log_line = line.decode('utf-8').rstrip()
-                    # 添加时间戳
-                    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
-                    # 根据日志级别设置颜色
-                    colored_line = log_line
-                    match = log_level_pattern.search(log_line)
-                    if match:
-                        level = match.group(1).upper()
-                        if level == 'ERROR':
-                            colored_line = f"{Colors.ERROR}{log_line}{Colors.ENDC}"
-                        elif level == 'WARN':
-                            colored_line = f"{Colors.WARNING}{log_line}{Colors.ENDC}"
-                        elif level == 'INFO':
-                            colored_line = f"{Colors.GREEN}{log_line}{Colors.ENDC}"
-                        elif level == 'DEBUG':
-                            colored_line = f"{Colors.BLUE}{log_line}{Colors.ENDC}"
-                    print(f"[{timestamp}] {namespace}/{pod_name}/{container}: {colored_line}")
-                except UnicodeDecodeError:
-                    # 处理二进制日志
-                    print(f"[{timestamp}] {namespace}/{pod_name}/{container}: [二进制日志数据]")
+                # 设置一个正则表达式来识别日志级别
+                log_level_pattern = re.compile(r'\b(ERROR|WARN|INFO|DEBUG)\b', re.IGNORECASE)
 
-        except client.rest.ApiException as e:
-            print(f"❌ Error when monitoring log ({namespace}/{pod_name}/{container}): {e}")
-        except Exception as e:
-            print(f"❌ Unknown Error: {e}")
+                for line in logs_stream:
+                    if not line:
+                        continue
+                    try:
+                        log_line = line.decode('utf-8').rstrip()
+                        # 添加时间戳
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]
+                        # 根据日志级别设置颜色
+                        colored_line = log_line
+                        match = log_level_pattern.search(log_line)
+                        if match:
+                            level = match.group(1).upper()
+                            if level == 'ERROR':
+                                colored_line = f"{Colors.ERROR}{log_line}{Colors.ENDC}"
+                            elif level == 'WARN':
+                                colored_line = f"{Colors.WARNING}{log_line}{Colors.ENDC}"
+                            elif level == 'INFO':
+                                colored_line = f"{Colors.GREEN}{log_line}{Colors.ENDC}"
+                            elif level == 'DEBUG':
+                                colored_line = f"{Colors.BLUE}{log_line}{Colors.ENDC}"
+                        print(f"[{timestamp}] {namespace}/{pod_name}/{container}: {colored_line}")
+                    except UnicodeDecodeError:
+                        # 处理二进制日志
+                        print(f"[{timestamp}] {namespace}/{pod_name}/{container}: [二进制日志数据]")
+
+            except client.rest.ApiException as e:
+                print(f"❌ Error when monitoring log ({namespace}/{pod_name}/{container}): {e}")
+            except Exception as e:
+                print(f"❌ Unknown Error: {e}")
 
     # 为每个 pod 创建一个线程来监听日志
-    threads = []
-
     for pod in pod_list:
         for container in pod.spec.containers:
-            thread = threading.Thread(target=stream_logs, args=(pod, container.name))
+            thread = LogWorker(pod, container.name)
             threads.append(thread)
 
-    # 启动所有线程
     for thread in threads:
         thread.start()
 
     try:
-        # 等待所有线程完成
         for thread in threads:
             thread.join()
-    except KeyboardInterrupt:
-        print("\n👋 监听已停止")
-        sys.exit(0)
 
+    except Exception as e:
+        print("\n❌ Error while waiting for threads to finish: ", e)
 
-if __name__ == "__main__":
-    watch_pod_logs(
-        namespace=os.getenv("MONITORING_NAMESPACE"),
-        label_selector=os.getenv("MONITORING_SELECTOR"),
-    )
+def stop_all_threads():
+    """
+    Stop all threads
+    """
+    for thread in threads:
+        if thread.is_alive():
+            thread.join(timeout=1)
+            if thread.is_alive():
+                print(f"❌ Thread {thread.name} is still running, attempting to terminate...")
