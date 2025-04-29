@@ -1,6 +1,7 @@
-kafka-python>=2.0.2 
+kafka-python>=2.0.2
+kubernetes
+dotenv
 requests 
 python-dateutil
 gitpython>=3.1
-requests>=2.28
-python-dotenv>=0.19
+requests

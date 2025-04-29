@@ -14,7 +14,7 @@ ERROR_DIR = "errors"
 os.makedirs(ERROR_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
+    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
 )
 logger = logging.getLogger(__name__)
 
