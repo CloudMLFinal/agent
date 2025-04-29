@@ -9,6 +9,10 @@ from datetime import datetime
 from typing import Optional, Any, Dict, List, Union, cast
 import select
 import json
+from .pos import PosPointer
+
+#deinf pod type
+Pod = client.V1Pod
 
 #logger
 import logging
@@ -79,6 +83,7 @@ def watch_pod_logs(namespace, label_selector=None):
     class LogWorker(threading.Thread):
         def __init__(self, pod: Any, container: str, api_client: client.CoreV1Api):
             super().__init__()
+            self.pos_pointer = PosPointer(f"{namespace}-{pod.metadata.name}-{container}")
             self.pod = pod
             self.container = container
             self._stop_event = threading.Event()
@@ -121,8 +126,6 @@ def watch_pod_logs(namespace, label_selector=None):
                     "container": self.container,
                     "container_info": container_info,
                     "node_name": getattr(pod_details.spec, 'node_name', 'N/A'),  # type: ignore
-                    "pod_ip": getattr(pod_details.status, 'pod_ip', 'N/A'),  # type: ignore
-                    "host_ip": getattr(pod_details.status, 'host_ip', 'N/A'),  # type: ignore
                     "phase": getattr(pod_details.status, 'phase', 'N/A'),  # type: ignore
                     "start_time": getattr(pod_details.status, 'start_time', None)  # type: ignore
                 }
@@ -133,6 +136,7 @@ def watch_pod_logs(namespace, label_selector=None):
                 
                 # Print metadata information
                 print(f"{Colors.HEADER}Pod Metadata: {pod_name}/{self.container}{Colors.ENDC}")
+                
                 print(f"{Colors.BLUE}Namespace: {metadata['namespace']}{Colors.ENDC}")
                 print(f"{Colors.BLUE}Node: {metadata['node_name']}{Colors.ENDC}")
                 print(f"{Colors.BLUE}Status: {metadata['phase']}{Colors.ENDC}")
@@ -192,6 +196,7 @@ def watch_pod_logs(namespace, label_selector=None):
                         namespace=namespace,
                         container=self.container,
                         follow=True,
+                        since_seconds=None if self.pos_pointer.pos == 0 else int(datetime.now().timestamp() - self.pos_pointer.pos),
                         _preload_content=False
                     )
 
@@ -201,6 +206,7 @@ def watch_pod_logs(namespace, label_selector=None):
                     while not self._stop_event.is_set():
                         # Check if there is data to read, timeout 1 second
                         if select.select([self.logs_stream], [], [], 1.0)[0]:
+                            self.pos_pointer.set(int(datetime.now().timestamp())).save_cache()
                             try:
                                 line = self.logs_stream.readline()
                                 if not line:
