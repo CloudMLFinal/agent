@@ -25,7 +25,7 @@ class GithubRepoClient:
         # get owner and repo name from the repo url
         owner, repo = repo_url.split("/")[-2:]
         repo = repo.split(".")[0]
-        logger.info(f"Getting repo {owner}/{repo}")
+        logger.debug(f"Getting repo {owner}/{repo}")
         # get the repo
         self.repo = gh.get_repo(f"{owner}/{repo}")
         

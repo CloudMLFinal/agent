@@ -84,7 +84,7 @@ class CodeFixerQueue:
                 try:
                     logger.info(f"Assign ticket to worker")
                     fixer = CodeFixer(pkg)
-                    success = fixer.run()
+                    success = await fixer.run()
                     if callback:
                         callback(success)
                 except Exception as e:
