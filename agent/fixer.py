@@ -450,27 +450,30 @@ class CodeFixer:
             if self.gh_client:
                 # Generate report
                 report_str= f"""
-                # Auto Fix Report
-                
-                > ID: {feature_id}
-                > Created at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
-                
-                ## Error Log
-                ```shell
-                {self.ticket.message}
-                ```
-                
-                ## Error Analysis
-                {explanation}
-                
-                ## Code Changes
-                {code_changes_info}
-                
-                ## Analysis Details
-                ```json
-                {json.dumps(analysis_results, indent=2)}
-                ```
-                """
+# Auto Fix Report
+
+> Created at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+## Error Log
+
+```shell
+{self.ticket.message}
+```
+
+## Error Analysis
+
+{explanation}
+
+## Code Changes
+
+{code_changes_info}
+
+## Analysis Details
+
+```json
+{json.dumps(analysis_results, indent=2)}
+```
+"""
                 
                 pr = self.gh_client.submit_pr(
                     pr_title=f"Fix: {explanation[:50]}...",
