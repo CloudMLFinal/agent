@@ -1,4 +1,3 @@
-import hashlib
 import re
 import os
 from datetime import datetime
@@ -18,10 +17,6 @@ class MessagePackage:
         self.message = message
         self.metadata = metadata
         self.level = level
-        feature_content = message;
-        # filter the content like 2025-04-30 11:40:04,889
-        feature_content = re.sub(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} -', '', feature_content)
-        self.feature_id = hashlib.sha256(feature_content.encode()).hexdigest()
         
     def __str__(self):
         return f"MessagePackage(message={self.message}, metadata={self.metadata}, level={self.level.value})"

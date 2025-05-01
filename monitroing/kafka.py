@@ -7,12 +7,16 @@ import re
 from datetime import datetime
 from subprocess import Popen
 from pathlib import Path
+from agent.queue import CodeFixerQueue
+from monitroing.package import LogLevel, MessagePackage
 from tools.github import GithubRepoClient
 import tempfile
 
 
 ERROR_DIR = "errors"  
 os.makedirs(ERROR_DIR, exist_ok=True)
+
+queue = CodeFixerQueue()
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,25 +88,8 @@ def start_consuming(topic_name: str, group_id: str | None = None) -> None:
                 if TIMESTAMP_LINE_RE.match(log_line) and (
                     " ERROR " not in log_line and " CRITICAL " not in log_line
                 ):
-                    current_dir = Path(__file__).parent.absolute()
-                    agent_path = current_dir.parent / "agent.py"
-                    
-                    # Create a temporary file with the error buffer content
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as temp_file:
-                        temp_file.write(error_buffer)
-                        temp_file_path = Path(temp_file.name)
-                    
-                    # Analyze error and check for existing PR
-                    file_path, feature_id, line_number = github_client.analyze_error(temp_file_path)
-                    if file_path and not github_client.check_existing_pr(feature_id):
-                        logger.info(f"Found new error in {file_path}:{line_number}, feature_id: {feature_id}")
-                        Popen(["python", str(agent_path), str(temp_file_path), feature_id])
-                    else:
-                        logger.info(f"Skipping error as PR already exists or couldn't analyze error: {feature_id}")
-                        
-                    # Clean up the temporary file
-                    os.unlink(temp_file_path)
-                            
+                    logger.info(f"Analyzing error: {error_buffer}")
+                    queue.submit_job(MessagePackage({}, error_buffer, LogLevel.ERROR))
                     in_error_block = False
                     error_buffer = ""
                 continue
