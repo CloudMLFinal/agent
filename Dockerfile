@@ -1,8 +1,21 @@
-FROM python:3.11-slim
+FROM python:3.11-alpine
 
 LABEL version="1.0.0"
 LABEL description="Log Repair Agent"
 LABEL maintainer="Kamiku Xue | Ning Miao | Raymond Lu"
+
+# system dependencies
+RUN apk add --no-cache \
+    build-base \
+    libffi-dev \
+    openssl-dev \
+    libressl-dev \
+    libressl-dev \
+    git
+
+# set git username and email
+RUN git config --global user.name "Code Fix Agent"
+RUN git config --global user.email "code-fix@agent.io"
 
 # Create a non-root user
 RUN useradd -m app
