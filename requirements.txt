@@ -1,1 +1,11 @@
-kafka-python>=2.0.2 
+kafka-python>=2.0.2
+kubernetes
+dotenv
+requests 
+python-dateutil
+gitpython>=3.1
+requests
+fastapi==0.104.1
+uvicorn==0.24.0
+PyGithub
+openai

@@ -6,3 +6,6 @@ node_modules
 .venv
 .idea
 __pycache__
+.pos
+.sandbox/*
+errors/*
