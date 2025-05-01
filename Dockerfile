@@ -9,8 +9,6 @@ RUN apk add --no-cache \
     build-base \
     libffi-dev \
     openssl-dev \
-    libressl-dev \
-    libressl-dev \
     git
 
 # set git username and email
@@ -18,8 +16,7 @@ RUN git config --global user.name "Code Fix Agent"
 RUN git config --global user.email "code-fix@agent.io"
 
 # Create a non-root user
-RUN useradd -m app
-USER app
+RUN addgroup -S app && adduser -S app -G app
 
 # Set the working directory
 WORKDIR /app
