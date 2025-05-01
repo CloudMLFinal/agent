@@ -7,3 +7,5 @@ node_modules
 .idea
 __pycache__
 .pos
+.sandbox/*
+errors/*

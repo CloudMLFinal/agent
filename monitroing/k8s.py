@@ -10,7 +10,8 @@ from typing import Optional, Any, Dict, List, Union, cast
 import select
 import json
 from .pos import PosPointer
-
+from .package import MessagePackage
+from agent.queue import CodeFixerQueue
 #deinf pod type
 Pod = client.V1Pod
 
@@ -35,6 +36,24 @@ class Colors:
     ERROR = '\033[91m'
     ENDC = '\033[0m'
     RED = '\033[91m'
+
+# Error log directory
+ERROR_DIR = "errors"
+os.makedirs(ERROR_DIR, exist_ok=True)
+
+queue = CodeFixerQueue()
+
+# Regular expressions for log parsing
+TIMESTAMP_LINE_RE = re.compile(r"^\[?\d{4}-\d{2}-\d{2}")
+DATETIME_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")
+
+def get_worker_status():
+    # Status of the threads
+    status = {
+        "total_threads": len(threads),
+        "running_threads": sum(1 for thread in threads if thread.is_alive()),
+    }
+    return status
 
 def watch_pod_logs(namespace, label_selector=None):
     global v1
@@ -92,10 +111,13 @@ def watch_pod_logs(namespace, label_selector=None):
             self.logs_stream = None
             self.pod_metadata = self._get_pod_metadata()
             self.name = f"LogWorker-{pod.metadata.name}-{container}"  # Give thread a meaningful name
+            self.in_error_block = False
+            self.err_file = None
 
         def _get_pod_metadata(self) -> Dict[str, Any]:
             """Get Pod metadata information"""
-            # Get pod name and namespace in a safe way
+            
+            # Get pod name and namespace
             pod_name = getattr(self.pod.metadata, 'name', 'unknown')
             namespace = getattr(self.pod.metadata, 'namespace', 'unknown')
             
@@ -171,13 +193,13 @@ def watch_pod_logs(namespace, label_selector=None):
                     self.logs_stream.close()
                 except:
                     pass
+            # Close error file if open
+            if self.err_file and not self.err_file.closed:
+                self.err_file.close()
 
         def stream_logs(self) -> None:
-            # Get pod name in a safe way
             pod_name = getattr(self.pod.metadata, 'name', 'unknown')
             namespace = getattr(self.pod.metadata, 'namespace', 'unknown')
-
-            # If container is not specified, use the first container
             if not self.container and hasattr(self.pod, 'spec') and hasattr(self.pod.spec, 'containers'):
                 logger.error(f'No container specified')
                 return
@@ -185,25 +207,22 @@ def watch_pod_logs(namespace, label_selector=None):
             print(f"{Colors.HEADER}Starting to monitor logs for {namespace}/{pod_name}/{self.container}...{Colors.ENDC}")
 
             # Set up a regular expression to identify log levels
-            log_level_pattern = re.compile(r'\b(ERROR|WARN|INFO|DEBUG)\b', re.IGNORECASE)
+            log_level_pattern = re.compile(r'\b(ERROR|WARN|INFO|DEBUG|CRITICAL)\b', re.IGNORECASE)
             
-            # multiline
+            # multiline patterns
             log_prefix_pattern = re.compile(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} -')
+            error_start_pattern = re.compile(r'Traceback \(most recent call last\):')
+            error_end_pattern = re.compile(r'^\w+Error: .*')
+            
             # log line buffer
             log_line_buffer: List[str] = []
+            in_error_stack = False
             
-            def packeage_log(log: str, metadata: Dict[str, Any]):
-                return {
-                    "log_raw": log,
-                    "metadata": metadata,
-                }
+            retry_count = 0
             
             def flush_log_line_buffer():
                 if log_line_buffer:
-                    joined_lines = "\n".join(log_line_buffer)
-                    print(f"{namespace}/{self.container}: {joined_lines}")
-                    pkg = packeage_log(joined_lines, self.pod_metadata)
-                    print(pkg)
+                    queue.submit_job(MessagePackage.package_multiline_log(log_line_buffer, self.pod_metadata))
                     log_line_buffer.clear()
             
             # Main monitoring loop
@@ -218,38 +237,52 @@ def watch_pod_logs(namespace, label_selector=None):
                         since_seconds=None if self.pos_pointer.pos == 0 else int(datetime.now().timestamp() - self.pos_pointer.pos),
                         _preload_content=False
                     )
+                    
                     print(f"{Colors.GREEN}Successfully connected to log stream for {namespace}/{pod_name}/{self.container}{Colors.ENDC}")
 
                     # Read log stream in non-blocking mode
                     while not self._stop_event.is_set():
+                        
                         # Check if there is data to read, timeout 1 second
-                        if select.select([self.logs_stream], [], [], 1.0)[0]:
+                        if select.select([self.logs_stream], [], [], 1)[0]:
+                            retry_count = 0
+                            # update pos pointer
                             self.pos_pointer.set(int(datetime.now().timestamp())).save_cache()
                             try:
+                                # read the log line
                                 line = self.logs_stream.readline()
+                                
+                                # if no new logs, continue the loop
                                 if not line:
                                     # If no new logs, continue the loop
                                     flush_log_line_buffer()
                                     continue
-                                try:
-                                    log_line: str = line.decode('utf-8').rstrip()
+                                
+                                log_line: str = line.decode('utf-8').rstrip()
                                     
-                                    # Set color based on log level
-                                    if log_prefix_pattern.match(log_line):
+                                # Handle error logs using MessagePackage
+                                self.in_error_block, self.err_file = MessagePackage.write_error_log(
+                                    log_line, self.pod_metadata, self.in_error_block, self.err_file
+                                )
+                                # Handle multiline logs
+                                if error_start_pattern.match(log_line):
+                                    # Start of error stack trace
+                                    in_error_stack = True
+                                    log_line_buffer.append(log_line)
+                                elif in_error_stack:
+                                    # Inside error stack trace
+                                    log_line_buffer.append(log_line)
+                                    if error_end_pattern.match(log_line):
+                                        # End of error stack trace
+                                        in_error_stack = False
                                         flush_log_line_buffer()
-                                    
-                                    colored_line = log_line
-                                    match = log_level_pattern.search(log_line)
-                                    if match:
-                                        level = match.group(1).upper()
-                                        if level == 'ERROR':
-                                            colored_line = f"{Colors.ERROR}{log_line}{Colors.ENDC}"
-                                        elif level == 'WARN':
-                                            colored_line = f"{Colors.WARNING}{log_line}{Colors.ENDC}"
-                                    log_line_buffer.append(colored_line)
-                                except UnicodeDecodeError:
-                                    # Handle binary logs
-                                    print(f"{namespace}/{self.container}: [Binary log data]")
+                                elif log_prefix_pattern.match(log_line):
+                                    # Regular log line with timestamp
+                                    flush_log_line_buffer()
+                                    log_line_buffer.append(log_line)
+                                else:
+                                    # Continuation of previous log line
+                                    log_line_buffer.append(log_line)
                             except Exception as e:
                                 # Handle read exceptions
                                 if not self._stop_event.is_set():
@@ -260,13 +293,16 @@ def watch_pod_logs(namespace, label_selector=None):
                         else:
                             # Timeout, continue loop
                             flush_log_line_buffer()
-                            continue
-                            
+                            continue         
                 except client.ApiException as e:
                     if not self._stop_event.is_set():
                         print(f"❌ API Error when monitoring log ({namespace}/{pod_name}/{self.container}): {e}")
                         # Wait before retrying
                         time.sleep(5)
+                        retry_count += 1
+                        if retry_count > 3:
+                            logger.error(f"🔌 Failed to monitor log for {namespace}/{pod_name}/{self.container} after 3 retries, terminate the worker")
+                            break
                 except Exception as e:
                     if not self._stop_event.is_set():
                         print(f"❌ Unknown Error: {e}")
@@ -279,6 +315,10 @@ def watch_pod_logs(namespace, label_selector=None):
                             self.logs_stream.close()
                         except:
                             pass
+                        
+                    # Ensure error file is closed
+                    if self.err_file and not self.err_file.closed:
+                        self.err_file.close()
                     print(f"{Colors.RED}Log stream for {namespace}/{pod_name}/{self.container} closed{Colors.ENDC}")
 
     # Create a thread for each pod to monitor logs
@@ -289,8 +329,7 @@ def watch_pod_logs(namespace, label_selector=None):
 
     [thread.start() for thread in threads]
     
-    print(f"{Colors.GREEN}All log monitoring threads have been started{Colors.ENDC}")
-    
+    print(f"✅ {Colors.GREEN} {len(threads)} log monitoring threads have been started{Colors.ENDC}")    
 
 def stop_all_threads():
     """
