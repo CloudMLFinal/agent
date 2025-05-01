@@ -61,7 +61,7 @@ class CodeFixerQueue:
     def submit_job(self, pkg: MessagePackage, callback: Optional[Callable[[bool], None]] = None) -> None:
         """Submit a new job to the queue (synchronous version)
         Args:
-            error_file: Path to the error file to process
+            pkg: Message Package
             callback: Optional callback function to be called when job completes
         """
         if pkg.level == LogLevel.INFO or pkg.level == LogLevel.DEBUG or pkg.level == LogLevel.WARNING:
@@ -84,7 +84,7 @@ class CodeFixerQueue:
                 try:
                     logger.info(f"Assign ticket to worker")
                     fixer = CodeFixer(pkg)
-                    success = await fixer.run()
+                    success = fixer.run()
                     if callback:
                         callback(success)
                 except Exception as e:
@@ -92,6 +92,7 @@ class CodeFixerQueue:
                     if callback:
                         callback(False)
                 finally:
+                    logger.info(f"Agent Queue task done")
                     self.queue.task_done()
             except asyncio.CancelledError:
                 break

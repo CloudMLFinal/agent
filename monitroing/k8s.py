@@ -205,9 +205,6 @@ def watch_pod_logs(namespace, label_selector=None):
                 return
 
             print(f"{Colors.HEADER}Starting to monitor logs for {namespace}/{pod_name}/{self.container}...{Colors.ENDC}")
-
-            # Set up a regular expression to identify log levels
-            log_level_pattern = re.compile(r'\b(ERROR|WARN|INFO|DEBUG|CRITICAL)\b', re.IGNORECASE)
             
             # multiline patterns
             log_prefix_pattern = re.compile(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} -')
@@ -242,7 +239,6 @@ def watch_pod_logs(namespace, label_selector=None):
 
                     # Read log stream in non-blocking mode
                     while not self._stop_event.is_set():
-                        
                         # Check if there is data to read, timeout 1 second
                         if select.select([self.logs_stream], [], [], 1)[0]:
                             retry_count = 0
@@ -262,7 +258,10 @@ def watch_pod_logs(namespace, label_selector=None):
                                     
                                 # Handle error logs using MessagePackage
                                 self.in_error_block, self.err_file = MessagePackage.write_error_log(
-                                    log_line, self.pod_metadata, self.in_error_block, self.err_file
+                                    log_line, 
+                                    self.pod_metadata, 
+                                    self.in_error_block, 
+                                    self.err_file
                                 )
                                 # Handle multiline logs
                                 if error_start_pattern.match(log_line):

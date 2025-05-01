@@ -34,6 +34,7 @@ class CodeFixer:
         assert os.getenv("SOURCE_REPO"), "SOURCE_REPO must be set"
        
         self.repo_url = str(os.getenv("SOURCE_REPO"))
+        self.gh_client = GithubRepoClient(self.repo_url)
         self.agent = OpenAI(api_key=str(os.getenv("AGENT_API_KEY")), base_url="https://api.deepseek.com")
         
         # Path mapping rules (container path -> local path)
@@ -47,14 +48,14 @@ class CodeFixer:
         try:
             assert self.repo_dir, "Repo dir is not set"
             if not self.repo_dir.exists():
-                logger.info(f"Cloning repository {self.repo_url}")
+                logger.debug(f"Cloning repository {self.repo_url}")
                 self.repo = git.Repo.clone_from(self.repo_url, self.repo_dir)
                 self.repo.git.status()
             else:
                 # If directory exists but not a git repo, remove it and clone
                 if not (self.repo_dir / ".git").exists():
                     shutil.rmtree(self.repo_dir)
-                    logger.info(f"Re-cloning repository {self.repo_url}")
+                    logger.debug(f"Re-cloning repository {self.repo_url}")
                     self.repo = git.Repo.clone_from(self.repo_url, self.repo_dir)
                     self.repo.git.status()
             
@@ -65,8 +66,7 @@ class CodeFixer:
                 
             # checkout a new fix branch
             self.repo.git.checkout("-b", f"fix/{id}")
-            
-            print(f"Repository cloned successfully: {self.repo_dir}")
+            logger.info(f"Repository cloned successfully: {self.repo_dir}")
         except git.GitError as e:
             logger.error(f"Git operation failed: {str(e)}")
             raise
@@ -99,7 +99,7 @@ class CodeFixer:
             error_info.append((file_path, int(match.group("line"))))
         
         logger.info(f"Found {len(error_info)} error files in application")
-        logger.info(f"Error Details: {self.ticket.message}")
+        logger.debug(f"Error Details: {self.ticket.message}")
             
         return error_info
 
@@ -263,10 +263,10 @@ class CodeFixer:
                 next_step = analysis_data.get('next', '')
                 
                 # Log the extracted information
-                logger.info(f"Analysis Thought: {thought}")
-                logger.info(f"Action: {action}")
-                logger.info(f"Details: {json.dumps(details, indent=2)}")
-                logger.info(f"Next Step: {next_step}")
+                logger.debug(f"Analysis Thought: {thought}")
+                logger.debug(f"Action: {action}")
+                logger.debug(f"Details: {json.dumps(details, indent=2)}")
+                logger.debug(f"Next Step: {next_step}")
                 
                 # Handle the action
                 should_continue = self._handle_action({
@@ -295,7 +295,6 @@ class CodeFixer:
                         analysis_results,
                         action  # Use the current action as the next command
                     ))
-                
                 return {
                     'thought': thought,
                     'action': action,
@@ -316,7 +315,7 @@ class CodeFixer:
             analysis_results: List of analysis results including actions, explanations, etc.
         """
         if not self.repo_dir or not analysis_results:
-            logger.error("Cannot commit: repo_dir is None or analysis_results is empty")
+            logger.warn("Cannot commit: repo_dir is None or analysis_results is empty")
             return
             
         # Get the last FIX action with explanation
@@ -401,6 +400,7 @@ class CodeFixer:
                     pr_body=report_str,
                     pr_branch=f"fix/{id}"
                 )
+                
                 logger.info(f"A fix PR created: {pr.html_url}") 
         except Exception as e:
             logger.error(f"Error during git operations: {str(e)}")
@@ -415,113 +415,6 @@ class CodeFixer:
         else:
             logger.warning(f"Cannot destroy sandbox: directory does not exist or is None")
     
-    async def run(self):
-        """Execute full workflow"""
-        try:
-            """Agent workflow"""
-            # 1. Parse error log first
-            error_info_list = self._parse_error_log()
-            feature_id = hashlib.sha256(''.join([f"{file_path}@{line}" for file_path, line in error_info_list]).encode()).hexdigest()
-           
-            self.sandbox_dir = Path(f".sandbox/{feature_id}")
-            self.repo_dir = self.sandbox_dir / "src"
-            self.repo_dir.mkdir(exist_ok=True, parents=True)
-           
-            print(f"Found {len(error_info_list)} in ticket {feature_id}")
-            
-            if len(error_info_list) == 0:
-                logger.info("No error files found, skip")
-                return False
-            
-            # 2. Check if the ticket is already in the pr list
-            self.gh_client = GithubRepoClient(self.repo_url)
-            
-            logger.info(f"Checking if the ticket {feature_id} is already in the pr list")
-            if self.gh_client.check_existing_pr(feature_id):
-                logger.info(f"Ticket {feature_id} is already in the pr list, skip")
-                return False
-            
-            # 2. Clone repository
-            try:
-                print(f"Cloning repository {self.repo_url}")
-                self._clone_repo(feature_id)
-            except Exception as e:
-                logger.error(f"Failed to clone repository: {str(e)}")
-                self._destroy()
-                return False
-            
-            # 3. Get source code of the error files
-            issues_source_content = []
-            for error_info in error_info_list:
-                file_path, line = error_info
-                file_path = self.repo_dir / file_path
-                # Verify file exists before trying to read it
-                if not file_path.exists():
-                    logger.error(f"File not found after clone: {file_path}")
-                    continue
-                content = get_file_in_line(file_path, line)
-                print(f"File: {file_path}, Line: {line}, Content: {content}")
-                issues_source_content.append((file_path, line, content))
-                
-            # Prepare prompt for the agent
-            source_content_str = ""
-            
-            if len(issues_source_content) > 0:
-                for file_path, line, content in issues_source_content:
-                    source_content_str += f"File: {file_path}@line {line} -> {content}\n"
-            else:
-                source_content_str = "No source code found, please check the log message for the details."
-            
-            USER_PROMPT = f"""
-            Raw log message:
-            {self.ticket.message}
-            
-            Source codes:
-            {source_content_str}
-            """
-            
-            # Initialize array to store all analysis results
-            all_analysis_results = []
-            
-            # Call the analysis method and capture results
-            analysis_result = self._analyze((
-                feature_id,
-                self.ticket.message,
-                source_content_str,
-                USER_PROMPT,
-                all_analysis_results,  # Pass the results array reference
-                "ANALYZE", # for agent to think next step
-            ))
-            
-            # If analysis is successful and has results, try to commit the fix
-            if analysis_result:
-                # Ensure the last result is added
-                if analysis_result not in all_analysis_results:
-                    all_analysis_results.append(analysis_result)
-                    
-                # If there are code_changes, commit the fixes
-                has_fixes = False
-                for result in all_analysis_results:
-                    if result.get('action') == 'FIX':
-                        details = result.get('details', {})
-                        if details and details.get('code_changes'):
-                            has_fixes = True
-                            break
-                
-                if has_fixes:
-                    logger.info("Code changes detected, committing fixes")
-                    self._commit_fix(all_analysis_results)
-                else:
-                    logger.info("No code changes detected, skipping commit")
-            
-            # cleanup the session
-            # self._destroy()
-            return True
-        except Exception as e:
-            logger.error(f"Process failed: {str(e)}")
-            self._destroy()  # Ensure cleanup on any error
-            return False
-
     def _handle_action(self, analysis_result: dict) -> bool:
         """Handle different actions based on the analysis result
         
@@ -556,8 +449,8 @@ class CodeFixer:
                     continue
                     
                 content = get_file_in_line(file_path, line)
-                logger.info(f"Inspecting file: {file_path}@line {line}")
-                logger.info(f"Content: {content}")
+                logger.debug(f"Inspecting file: {file_path}@line {line}")
+                logger.debug(f"Content: {content}")
                 
             return True
             
@@ -565,7 +458,7 @@ class CodeFixer:
             # For FIX action, we need to apply the code changes
             code_changes = details.get('code_changes', [])
             if not code_changes:
-                logger.info("No code changes to apply")
+                logger.debug("No code changes to apply")
                 return True
                 
             # Apply each code change
@@ -625,4 +518,109 @@ class CodeFixer:
             
         else:
             logger.error(f"Unknown action: {action}")
+            return False
+        
+    async def run(self):
+        """Execute full workflow"""
+        try:
+            """Agent workflow"""
+            # 1. Parse error log first
+            error_info_list = self._parse_error_log()
+            feature_id = hashlib.sha256(''.join([f"{file_path}@{line}" for file_path, line in error_info_list]).encode()).hexdigest()
+           
+            self.sandbox_dir = Path(f".sandbox/{feature_id}")
+            self.repo_dir = self.sandbox_dir / "src"
+            self.repo_dir.mkdir(exist_ok=True, parents=True)
+           
+            logger.debug(f"Found {len(error_info_list)} in ticket {feature_id}")
+            
+            if len(error_info_list) == 0:
+                logger.warn("No error files found, skip")
+                return False
+            
+            # 2. Check if the ticket is already in the pr list
+            logger.debug(f"Checking if the ticket {feature_id} is already in the pr list")
+            assert self.gh_client, "Github client is not initialized"
+            if self.gh_client.branch_exist_remote(f"fix/{feature_id}"):
+                logger.warn(f"Ticket {feature_id} is already in the pr list, skip")
+                return False
+            
+            # 2. Clone repository
+            try:
+                logger.debug(f"Cloning repository {self.repo_url}")
+                self._clone_repo(feature_id)
+            except Exception as e:
+                logger.error(f"Failed to clone repository: {str(e)}")
+                self._destroy()
+                return False
+            
+            # 3. Get source code of the error files
+            issues_source_content = []
+            for error_info in error_info_list:
+                file_path, line = error_info
+                file_path = self.repo_dir / file_path
+                # Verify file exists before trying to read it
+                if not file_path.exists():
+                    logger.error(f"File not found after clone: {file_path}")
+                    continue
+                content = get_file_in_line(file_path, line)
+                print(f"File: {file_path}, Line: {line}, Content: {content}")
+                issues_source_content.append((file_path, line, content))
+                
+            # Prepare prompt for the agent
+            source_content_str = ""
+            if len(issues_source_content) > 0:
+                for file_path, line, content in issues_source_content:
+                    source_content_str += f"File: {file_path}@line {line} -> {content}\n"
+            else:
+                source_content_str = "No source code found, please check the log message for the details."
+            
+            USER_PROMPT = f"""
+            Raw log message:
+            {self.ticket.message}
+            
+            Source codes:
+            {source_content_str}
+            """
+            
+            # Initialize array to store all analysis results
+            all_analysis_results = []
+            
+            # Call the analysis method and capture results
+            analysis_result = self._analyze((
+                feature_id,
+                self.ticket.message,
+                source_content_str,
+                USER_PROMPT,
+                all_analysis_results,  # Pass the results array reference
+                "ANALYZE", # for agent to think next step
+            ))
+            
+            # If analysis is successful and has results, try to commit the fix
+            if analysis_result:
+                # Ensure the last result is added
+                if analysis_result not in all_analysis_results:
+                    all_analysis_results.append(analysis_result)
+                    
+                # If there are code_changes, commit the fixes
+                has_fixes = False
+                for result in all_analysis_results:
+                    if result.get('action') == 'FIX':
+                        details = result.get('details', {})
+                        if details and details.get('code_changes'):
+                            has_fixes = True
+                            break
+                
+                if has_fixes:
+                    logger.debug("Code changes detected, committing fixes")
+                    self._commit_fix(all_analysis_results)
+                else:
+                    logger.info("No code changes detected, skipping commit")
+            
+            # cleanup the session
+            # self._destroy()
+            return True
+        except Exception as e:
+            logger.error(f"Process failed: {str(e)}")
+            self._destroy()  # Ensure cleanup on any error
             return False

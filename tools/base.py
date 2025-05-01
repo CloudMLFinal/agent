@@ -17,7 +17,7 @@ class BaseTool(ABC):
                 "type": "function",
                 "function": {
                     "name": "get_weather",
-                    "description": "Get weather of an location, the user shoud supply a location first",
+                    "description": "Get weather of an location, the user should supply a location first",
                     "parameters": {
                         "type": "object",
                         "properties": {

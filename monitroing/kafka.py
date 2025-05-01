@@ -10,11 +10,8 @@ from pathlib import Path
 from tools.github import GithubRepoClient
 import tempfile
 
-HOST: str | None = None
-PORT: int | None = None
 
 ERROR_DIR = "errors"  
-      
 os.makedirs(ERROR_DIR, exist_ok=True)
 
 logging.basicConfig(
@@ -43,7 +40,6 @@ def create_kafka_consumer(topic_name: str, group_id: str | None = None) -> Kafka
         auto_offset_reset="earliest",
         enable_auto_commit=True,
     )
-    
     logger.info(f"Successfully connected to Kafka broker at {HOST}:{PORT}")
     return consumer
 

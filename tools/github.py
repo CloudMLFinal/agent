@@ -107,6 +107,20 @@ class GithubRepoClient:
             path (Path): The path to clone the repo to
         """
     
+    def branch_exist_remote(self, branch_name: str):
+        """Check if a branch exists in the remote repository
+        Args:
+            branch_name (str): Name of the branch to check
+            
+        Returns:
+            bool: True if branch exists, False otherwise
+        """
+        try:
+            self.repo.get_branch(branch_name)
+            return True
+        except Exception:
+            return False
+    
     def check_existing_pr(self, feature_id: str) -> bool:
         """Check if there's an existing PR for this feature ID
         Args:

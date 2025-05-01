@@ -144,6 +144,5 @@ class MessagePackage:
                 if err_file:
                     err_file.close()
                     err_file = None
-                in_error_block = False
-                
+                in_error_block = False        
         return in_error_block, err_file
