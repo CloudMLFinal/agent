@@ -1,13 +1,9 @@
 import asyncio
-import logging
 import os
-from pathlib import Path
 from typing import Optional, Callable
-
 from monitroing.package import LogLevel, MessagePackage
 from .fixer import CodeFixer
-
-logger = logging.getLogger(__name__)
+from logger import logger
 
 class CodeFixerQueue:
     _instance = None
@@ -49,11 +45,13 @@ class CodeFixerQueue:
 
     async def _auto_start(self):
         """Automatically start the queue and keep it running"""
-        while True:
+        while not self._stop_event.is_set():
             try:
                 if not self._running:
                     await self.start()
-                await asyncio.sleep(1)  # Check every second
+                await asyncio.wait_for(self._stop_event.wait(), timeout=1.0)
+            except asyncio.TimeoutError:
+                continue
             except Exception as e:
                 logger.error(f"Error in starting agent queue: {str(e)}")
                 await asyncio.sleep(5)  # Wait 5 seconds before retrying
@@ -64,10 +62,13 @@ class CodeFixerQueue:
             pkg: Message Package
             callback: Optional callback function to be called when job completes
         """
-        if pkg.level == LogLevel.INFO or pkg.level == LogLevel.DEBUG or pkg.level == LogLevel.WARNING:
+        if pkg.level in {LogLevel.INFO, LogLevel.DEBUG, LogLevel.WARNING}:
             return
         if self._loop is not None:
-            self._loop.run_until_complete(self._submit_job_async(pkg, callback))
+            if self._loop.is_running():
+                asyncio.run_coroutine_threadsafe(self._submit_job_async(pkg, callback), self._loop)
+            else:
+                self._loop.run_until_complete(self._submit_job_async(pkg, callback))
         else:
             logger.error("Event loop not initialized")
 
@@ -80,7 +81,7 @@ class CodeFixerQueue:
         """Worker function that processes jobs from the queue"""
         while not self._stop_event.is_set():
             try:
-                pkg, callback = await self.queue.get()    
+                pkg, callback = await self.queue.get()
                 try:
                     logger.info(f"Assign ticket to worker")
                     fixer = CodeFixer(pkg)
@@ -101,10 +102,10 @@ class CodeFixerQueue:
         """Start the job queue workers"""
         if self._running:
             return
-            
+
         self._running = True
         self._stop_event.clear()
-        
+
         # Create worker tasks
         if self._loop is not None:
             self.workers = [
@@ -126,18 +127,27 @@ class CodeFixerQueue:
         """Stop the job queue workers (async version)"""
         if not self._running:
             return
-            
+
         self._running = False
         self._stop_event.set()
-        
+
         # Wait for all workers to complete
         if self.workers:
             await asyncio.gather(*self.workers, return_exceptions=True)
             self.workers.clear()
-            
+
         # Wait for queue to be empty
         await self.queue.join()
         logger.info("Stopped all workers")
+
+    async def shutdown(self):
+        await self._stop_async()
+        if self._start_task:
+            self._start_task.cancel()
+            try:
+                await self._start_task
+            except asyncio.CancelledError:
+                pass
 
     @property
     def is_running(self) -> bool:

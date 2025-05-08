@@ -21,12 +21,7 @@ from tools.github import GithubRepoClient
 # GITHUB_TOKEN - Personal access token for GitHub (to avoid login prompts)
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
-)
-
-logger = logging.getLogger(__name__)
+from logger import logger
 
 class CodeFixer:
     def __init__(self, ticket: MessagePackage):
@@ -609,6 +604,8 @@ class CodeFixer:
             """Agent workflow"""
             # 1. Parse error log first
             error_info_list = self._parse_error_log()
+
+            # generating the feature_id
             feature_id = hashlib.sha256(''.join([f"{file_path}@{line}" for file_path, line in error_info_list]).encode()).hexdigest()
            
             self.sandbox_dir = Path(f".sandbox/{feature_id}")
