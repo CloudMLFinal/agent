@@ -142,3 +142,7 @@ class MessagePackage:
                     err_file = None
                 in_error_block = False        
         return in_error_block, err_file
+
+    @property
+    def created_at(self):
+        return self._created_at

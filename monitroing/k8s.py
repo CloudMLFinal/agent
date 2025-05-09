@@ -197,7 +197,7 @@ def watch_pod_logs(namespace, label_selector=None):
                 logger.error(f'No container specified')
                 return
 
-            print(f"{Colors.HEADER}Starting to monitor logs for {namespace}/{pod_name}/{self.container}...{Colors.ENDC}")
+            logger.info(f"{Colors.HEADER}Starting to monitor logs for {namespace}/{pod_name}/{self.container}...{Colors.ENDC}")
             
             # multiline patterns
             log_prefix_pattern = re.compile(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} -')
@@ -228,7 +228,7 @@ def watch_pod_logs(namespace, label_selector=None):
                         _preload_content=False
                     )
                     
-                    print(f"{Colors.GREEN}Successfully connected to log stream for {namespace}/{pod_name}/{self.container}{Colors.ENDC}")
+                    logger.info(f"{Colors.GREEN}Successfully connected to log stream for {namespace}/{pod_name}/{self.container}{Colors.ENDC}")
 
                     # Read log stream in non-blocking mode
                     while not self._stop_event.is_set():
@@ -311,7 +311,7 @@ def watch_pod_logs(namespace, label_selector=None):
                     # Ensure error file is closed
                     if self.err_file and not self.err_file.closed:
                         self.err_file.close()
-                    print(f"{Colors.RED}Log stream for {namespace}/{pod_name}/{self.container} closed{Colors.ENDC}")
+                    logger.warn(f"{Colors.RED}Log stream for {namespace}/{pod_name}/{self.container} closed{Colors.ENDC}")
 
     # Create a thread for each pod to monitor logs
     for pod in pod_list:
@@ -327,7 +327,7 @@ def stop_all_threads():
     """
     Stop all threads
     """
-    print("Stopping all log monitoring threads...")
+    logger.info("Stopping all log monitoring threads...")
     for thread in threads:
         if thread.is_alive():
             thread.stop()
