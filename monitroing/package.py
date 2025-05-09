@@ -17,6 +17,7 @@ class MessagePackage:
         self.message = message
         self.metadata = metadata
         self.level = level
+        self._created_at = datetime.now()
         
     def __str__(self):
         return f"MessagePackage(message={self.message}, metadata={self.metadata}, level={self.level.value})"
@@ -141,3 +142,7 @@ class MessagePackage:
                     err_file = None
                 in_error_block = False        
         return in_error_block, err_file
+
+    @property
+    def created_at(self):
+        return self._created_at

@@ -1,11 +1,8 @@
 from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
-import threading
-import logging
-
 from monitroing.k8s import get_worker_status
 
-logger = logging.getLogger(__name__)
+from logger import logger
 
 app = FastAPI()
 

@@ -9,7 +9,7 @@ from openai import OpenAI
 import requests
 import logging
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, time
 
 from monitroing.package import MessagePackage
 from tools.file import get_content_from_file, get_file_in_line
@@ -21,12 +21,8 @@ from tools.github import GithubRepoClient
 # GITHUB_TOKEN - Personal access token for GitHub (to avoid login prompts)
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s",
-)
+from logger import logger
 
-logger = logging.getLogger(__name__)
 
 class CodeFixer:
     def __init__(self, ticket: MessagePackage):
@@ -34,32 +30,35 @@ class CodeFixer:
         self.sandbox_dir: Path | None = None
         self.repo_dir: Path | None = None
         self.gh_client: GithubRepoClient | None = None
-        
+
         assert os.getenv("AGENT_API_KEY"), "AGENT_API_KEY must be set"
         assert os.getenv("SOURCE_REPO"), "SOURCE_REPO must be set"
-       
+
         self.repo_url = str(os.getenv("SOURCE_REPO"))
-        
+
         # Get GitHub token from environment variable
         self.github_token = os.getenv("GITHUB_TOKEN")
         if self.github_token:
             # If token exists, embed it in the repo URL for authentication
             # Format: https://username:token@github.com/username/repo.git
             if self.repo_url.startswith("https://github.com/"):
-                self.repo_url = self.repo_url.replace("https://github.com/", f"https://x-access-token:{self.github_token}@github.com/")
+                self.repo_url = self.repo_url.replace(
+                    "https://github.com/", f"https://x-access-token:{self.github_token}@github.com/")
             elif self.repo_url.startswith("https://"):
                 # Handle other git hosts that use HTTPS
                 url_parts = self.repo_url.split("//")
                 if len(url_parts) > 1:
                     self.repo_url = f"{url_parts[0]}//x-access-token:{self.github_token}@{url_parts[1]}"
-            
+
             logger.debug(f"Using authenticated repo URL (token hidden)")
         else:
-            logger.warning("GITHUB_TOKEN not set, git operations may require manual authentication")
-            
+            logger.warning(
+                "GITHUB_TOKEN not set, git operations may require manual authentication")
+
         self.gh_client = GithubRepoClient(self.repo_url)
-        self.agent = OpenAI(api_key=str(os.getenv("AGENT_API_KEY")), base_url="https://api.deepseek.com")
-        
+        self.agent = OpenAI(api_key=str(
+            os.getenv("AGENT_API_KEY")), base_url="https://api.deepseek.com")
+
         # Path mapping rules (container path -> local path)
         self.path_mapping = {
             # TODO: add more path mapping rules base on the env
@@ -78,21 +77,23 @@ class CodeFixer:
                 if not (self.repo_dir / ".git").exists():
                     shutil.rmtree(self.repo_dir)
                     logger.debug(f"Re-cloning repository {self.repo_url}")
-                    self.repo = git.Repo.clone_from(self.repo_url, self.repo_dir)
-            
+                    self.repo = git.Repo.clone_from(
+                        self.repo_url, self.repo_dir)
+
             # Check if repo is valid
             self.repo.git.status()
-                
+
             # Configure Git user
             with self.repo.config_writer() as config:
                 config.set_value("user", "name", "CodeFix Bot")
                 config.set_value("user", "email", "bot@codefix.io")
-                
+
             # checkout a new fix branch
             branch_name = f"fix/{feature_id}"
             logger.debug(f"Creating branch: {branch_name}")
             self.repo.git.checkout("-b", branch_name)
-            logger.info(f"Repository cloned successfully: {self.repo_dir}, branch: {branch_name}")
+            logger.info(
+                f"Repository cloned successfully: {self.repo_dir}, branch: {branch_name}")
         except git.GitError as e:
             logger.error(f"Git operation failed: {str(e)}")
             raise
@@ -102,15 +103,15 @@ class CodeFixer:
         pattern = r"File \"(?P<file_path>.+?)\", line (?P<line>\d+)"
         matches = re.finditer(pattern, self.ticket.message, re.MULTILINE)
         error_info = []
-        
+
         for match in matches:
             # Convert container path to local path
             file_path = match.group("file_path")
-            
+
             # if containing site-packages, ignore it
             if "site-packages" in file_path:
                 continue
-            
+
             for prefix, local_path in self.path_mapping.items():
                 if file_path.startswith(prefix):
                     file_path = local_path / file_path[len(prefix):]
@@ -121,17 +122,17 @@ class CodeFixer:
                     file_path = self.repo_dir / file_path
                 else:
                     file_path = Path(file_path)
-            
+
             error_info.append((file_path, int(match.group("line"))))
-        
+
         logger.info(f"Found {len(error_info)} error files in application")
         logger.debug(f"Error Details: {self.ticket.message}")
-            
+
         return error_info
 
     def _analyze_with_api(self, context: tuple[Path, int, str]) -> str:
         file_path, line, content = context
-        
+
         """Analyze error using DeepSeek API"""
         prompt = f"""
         Please fix the following Python error:
@@ -148,7 +149,8 @@ class CodeFixer:
         """
         response = requests.post(
             "https://api.deepseek.com/v1/chat/completions",
-            headers={"Authorization": f"Bearer {str(os.getenv('AGENT_API_KEY'))}"},
+            headers={
+                "Authorization": f"Bearer {str(os.getenv('AGENT_API_KEY'))}"},
             json={
                 "model": "deepseek-chat",
                 "messages": [{"role": "user", "content": prompt}],
@@ -160,11 +162,11 @@ class CodeFixer:
     def _analyze(self, context):
         """Analyze error using DeepSeek API"""
         id, raw_message, source_content, prompt, analysis_results, CMD = context
-        
+
         print(f"Analyzing analysis_results: {analysis_results}")
-        
+
         if CMD == "ANALYZE":
-            STEP_PROMPT ="""
+            STEP_PROMPT = """
             You are an experienced operations engineer analyzing Python code errors. Your role is to:
             1. Quickly identify the root cause of errors
             2. Provide practical, production-ready fixes
@@ -252,7 +254,7 @@ class CodeFixer:
 
             Respond with your analysis steps until reaching TERMINATE.
             """
-        
+
             try:
                 # start thinking
                 response = self.agent.chat.completions.create(
@@ -263,7 +265,7 @@ class CodeFixer:
                     ],
                     stream=False
                 )
-                
+
                 # Parse the response
                 if not response or not response.choices or not response.choices[0].message:
                     logger.error("Invalid response format")
@@ -272,29 +274,29 @@ class CodeFixer:
                 if not content:
                     logger.error("Empty response content")
                     return analysis_results
-                    
+
                 # Remove the markdown code block if present
                 if content.startswith('```json'):
                     content = content[7:]  # Remove ```json
                 if content.endswith('```'):
                     content = content[:-3]  # Remove ```
                 content = content.strip()
-                
+
                 # Parse the JSON
                 analysis_data = json.loads(content)
-                
+
                 # Extract the information
                 thought = analysis_data.get('thought', '')
                 action = analysis_data.get('action', '')
                 details = analysis_data.get('details', {})
                 next_step = analysis_data.get('next', '')
-                
+
                 # Log the extracted information
                 logger.debug(f"Analysis Thought: {thought}")
                 logger.debug(f"Action: {action}")
                 logger.debug(f"Details: {json.dumps(details, indent=2)}")
                 logger.debug(f"Next Step: {next_step}")
-                
+
                 # Update the analysis results
                 analysis_results.append({
                     'id': id,  # Add the id to the analysis result
@@ -303,7 +305,7 @@ class CodeFixer:
                     'details': details,
                     'next': next_step
                 })
-                
+
                 # Handle the action
                 should_continue = self._handle_action({
                     'thought': thought,
@@ -311,7 +313,7 @@ class CodeFixer:
                     'details': details,
                     'next': next_step
                 })
-                
+
                 # If we should continue, update the context and call analyze again
                 if should_continue:
                     # Call analyze again with updated context
@@ -323,7 +325,7 @@ class CodeFixer:
                         analysis_results,
                         action  # Use the current action as the next command
                     ))
-                
+
             except json.JSONDecodeError as e:
                 logger.error(f"Failed to parse response JSON: {e}")
                 return analysis_results
@@ -331,38 +333,38 @@ class CodeFixer:
                 logger.error(f"Error processing response: {e}")
                 return analysis_results
         return analysis_results
-    
-    def _commit_fix(self, analysis_results: list):
+
+    def _commit_fix(self, analysis_results: list, timing: dict = {}):
         """Commit fix suggestions
-        
         Args:
             analysis_results: List of analysis results including actions, explanations, etc.
         """
         if not self.repo_dir or not analysis_results:
-            logger.warn("Cannot commit: repo_dir is None or analysis_results is empty")
+            logger.warn(
+                "Cannot commit: repo_dir is None or analysis_results is empty")
             return
-            
+
         # Get the last FIX action with explanation
         explanation = "Auto fix by agent"
         details = None
         feature_id = None  # Initialize feature_id
-        
+
         # Try to get the feature_id from the first item's id
         if len(analysis_results) > 0 and isinstance(analysis_results[0], dict):
             feature_id = analysis_results[0].get('id', None)
-        
+
         # If feature_id is still None, generate a new one
         if not feature_id:
             # Use the directory name as feature_id
             feature_id = self.sandbox_dir.name if self.sandbox_dir else "unknown"
-        
+
         for result in reversed(analysis_results):
             if result.get('action') == 'FIX':
                 details = result.get('details', {})
                 if details and 'explanation' in details:
                     explanation = details['explanation']
                     break
-        
+
         # Get code changes for commit message details
         code_changes_info = ""
         if details and 'code_changes' in details:
@@ -373,8 +375,9 @@ class CodeFixer:
                 code_changes_info += f"\n- {file_path}:{line}: {explanation}"
 
         # Commit to Git
-        commit_message = f"[Bot] Fix: {explanation[:50]}..." if len(explanation) > 50 else f"[Bot] Fix: {explanation}"
-        
+        commit_message = f"[Bot] Fix: {explanation[:50]}..." if len(
+            explanation) > 50 else f"[Bot] Fix: {explanation}"
+
         try:
             # Also add any changed files from the FIX actions
             changed_files = set()
@@ -389,19 +392,21 @@ class CodeFixer:
                                     # Convert file_path to Path object if it's a string
                                     if isinstance(file_path, str):
                                         file_path = Path(file_path)
-                                    
+
                                     # Get absolute path first to ensure consistent paths
                                     abs_file_path = file_path.resolve()
                                     abs_repo_dir = self.repo_dir.resolve()
-                                    
+
                                     # Make sure the file is inside the repo
                                     if str(abs_file_path).startswith(str(abs_repo_dir)):
                                         changed_files.add(str(abs_file_path))
                                     else:
-                                        logger.error(f"File {file_path} is not inside the repo directory {self.repo_dir}")
+                                        logger.error(
+                                            f"File {file_path} is not inside the repo directory {self.repo_dir}")
                                 except Exception as e:
-                                    logger.error(f"Error processing file path: {file_path}, {str(e)}")
-            
+                                    logger.error(
+                                        f"Error processing file path: {file_path}, {str(e)}")
+
             # Add all changed files
             for file_path in changed_files:
                 try:
@@ -412,28 +417,31 @@ class CodeFixer:
                     logger.debug(f"Adding file to git: {relative_path}")
                     self.repo.index.add([str(relative_path)])
                 except (ValueError, git.GitCommandError) as e:
-                    logger.error(f"Error adding file to git: {file_path}, {str(e)}")
-            
+                    logger.error(
+                        f"Error adding file to git: {file_path}, {str(e)}")
+
             # commit the changes
             self.repo.index.commit(commit_message)
-            
+
             # Push to origin
             branch_name = f"fix/{feature_id}"
             logger.debug(f"Pushing to branch: {branch_name}")
-            
+
             # Set up credential helper to avoid prompts
             if hasattr(self, 'github_token') and self.github_token:
                 # Configure Git to use credentials without prompting
                 # Create a temporary script for credential helper
                 import tempfile
                 with tempfile.NamedTemporaryFile('w', delete=False, suffix='.sh') as f:
-                    f.write('#!/bin/sh\necho "username=x-access-token\npassword=' + self.github_token + '"')
+                    f.write(
+                        '#!/bin/sh\necho "username=x-access-token\npassword=' + self.github_token + '"')
                     credential_helper = f.name
                 os.chmod(credential_helper, 0o700)  # Make executable
-                
+
                 try:
                     # Set credential helper for this repo
-                    self.repo.git.config("credential.helper", credential_helper)
+                    self.repo.git.config(
+                        "credential.helper", credential_helper)
                     # Push with the configured credential helper
                     self.repo.git.push("origin", branch_name)
                 finally:
@@ -443,13 +451,13 @@ class CodeFixer:
             else:
                 # Fall back to regular push
                 self.repo.git.push("origin", branch_name)
-                
+
             logger.info(f"Fix committed to branch {branch_name}")
-            
+
             # create a pr
             if self.gh_client:
                 # Generate report
-                report_str= f"""
+                report_str = f"""
 # Auto Fix Report
 
 > Created at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
@@ -473,15 +481,30 @@ class CodeFixer:
 ```json
 {json.dumps(analysis_results, indent=2)}
 ```
+
+### Timing
+
+```shell
+
+Created at {timing.get('create_at').strftime("%Y-%m-%d %H:%M:%S") if timing.get('create_at') else "N/A"}
+Worker start at {timing.get('worker_start_at').strftime("%Y-%m-%d %H:%M:%S") if timing.get('worker_start_at') else "N/A"}
+Queue wait time {timing.get('queue_wait_time', 'N/A').total_seconds() * 1000:.2f}ms ({timing.get('queue_wait_time', 'N/A').total_seconds() / timing.get('total_time', 'N/A').total_seconds() * 100:.1f}%)
+Prepare time {timing.get('prepare_time', 'N/A').total_seconds() * 1000:.2f}ms ({timing.get('prepare_time', 'N/A').total_seconds() / timing.get('total_time', 'N/A').total_seconds() * 100:.1f}%)
+Agent time {timing.get('agent_time', 'N/A').total_seconds() * 1000:.2f}ms ({timing.get('agent_time', 'N/A').total_seconds() / timing.get('total_time', 'N/A').total_seconds() * 100:.1f}%)
+Repo time {timing.get('repo_time', 'N/A').total_seconds() * 1000:.2f}ms ({timing.get('repo_time', 'N/A').total_seconds() / timing.get('total_time', 'N/A').total_seconds() * 100:.1f}%)
+Total time {timing.get('total_time', 'N/A').total_seconds() * 1000:.2f}ms (100.0%)
+
+```
+
 """
-                
+
                 pr = self.gh_client.submit_pr(
                     pr_title=f"Fix: {explanation[:50]}...",
                     pr_body=report_str,
                     pr_branch=branch_name
                 )
-                
-                logger.info(f"A fix PR created: {pr.html_url}") 
+
+                logger.info(f"A fix PR created: {pr.html_url}")
         except Exception as e:
             logger.error(f"Error during git operations: {str(e)}")
             # Log full traceback for debugging
@@ -497,137 +520,149 @@ class CodeFixer:
                 os.rmdir(self.sandbox_dir)
             logger.info(f"Removed sandbox directory: {self.sandbox_dir}")
         else:
-            logger.warning(f"Cannot destroy sandbox: directory does not exist or is None")
-    
+            logger.warning(
+                f"Cannot destroy sandbox: directory does not exist or is None")
+
     def _handle_action(self, analysis_result: dict) -> bool:
         """Handle different actions based on the analysis result
-        
+
         Args:
             analysis_result: The analysis result containing action and details
-            
+
         Returns:
             bool: Whether to continue the analysis process
         """
         action = analysis_result.get('action', '')
         details = analysis_result.get('details', {})
-        
+
         if action == 'ANALYZE':
             # For ANALYZE action, we need to inspect the specified files
             inspections = details.get('inspections', [])
             if not inspections:
                 logger.info("No files to inspect, moving to next step")
                 return True
-                
+
             # Get content of files to inspect
             for inspection in inspections:
                 file_path = inspection.get('file_path')
                 line = inspection.get('line')
                 if not file_path or not line:
                     continue
-                    
+
                 # Use the provided file path directly
                 file_path = Path(file_path)
-                    
+
                 if not file_path.exists():
                     logger.error(f"File not found: {file_path}")
                     continue
-                    
+
                 content = get_file_in_line(file_path, line)
                 logger.debug(f"Inspecting file: {file_path}@line {line}")
                 logger.debug(f"Content: {content}")
-                
-            return True     
+
+            return True
         elif action == 'FIX':
             # For FIX action, we need to apply the code changes
             code_changes = details.get('code_changes', [])
             if not code_changes:
                 logger.debug("No code changes to apply")
                 return True  # Continue even if no changes to apply
-                
+
             # Apply each code change
             for change in code_changes:
                 file_path = change.get('file_path')
                 line = change.get('line')
                 old_content = change.get('old_content')
                 new_content = change.get('new_content')
-                
+
                 if not all([file_path, line, old_content, new_content]):
                     logger.error("Missing required fields in code change")
                     continue
-                    
+
                 # Use the provided file path directly
                 file_path = Path(file_path)
-                    
+
                 if not file_path.exists():
                     logger.error(f"File not found: {file_path}")
                     continue
-                    
+
                 # Read the file content
                 with open(file_path, 'r') as f:
                     lines = f.readlines()
-                    
+
                 # Replace the line
                 if 0 <= line - 1 < len(lines):
                     if lines[line - 1].strip() == old_content.strip():
                         lines[line - 1] = new_content + '\n'
-                        logger.info(f"Applied change to {file_path}@line {line}")
+                        logger.info(
+                            f"Applied change to {file_path}@line {line}")
                     else:
-                        logger.error(f"Content mismatch at {file_path}@line {line}")
+                        logger.error(
+                            f"Content mismatch at {file_path}@line {line}")
                         logger.error(f"Expected: {old_content}")
                         logger.error(f"Found: {lines[line - 1]}")
                         continue
-                        
+
                 # Write back the changes
                 with open(file_path, 'w') as f:
                     f.writelines(lines)
-                    
+
             return True
-            
+
         elif action == 'TEST':
             # For TEST action, we need to run the suggested tests
             tests = details.get('tests', '')
             if not tests:
                 logger.info("No tests to run")
                 return True
-                
+
             logger.info(f"Suggested tests:\n{tests}")
             # TODO: Implement test running logic
             return True
-            
+
         elif action == 'TERMINATE':
             # For TERMINATE action, we end the analysis process
             logger.info("Analysis process terminated")
             return False
-            
+
         else:
             logger.error(f"Unknown action: {action}")
             return False
-        
+
     async def run(self):
         """Execute full workflow"""
         try:
             """Agent workflow"""
+            start_at = datetime.now()
+            start_time = datetime.now()
+
             # 1. Parse error log first
             error_info_list = self._parse_error_log()
-            feature_id = hashlib.sha256(''.join([f"{file_path}@{line}" for file_path, line in error_info_list]).encode()).hexdigest()
-           
+
+            # generating the feature_id
+            feature_id = hashlib.sha256(''.join(
+                [f"{file_path}@{line}" for file_path, line in error_info_list]).encode()).hexdigest()
+
             self.sandbox_dir = Path(f".sandbox/{feature_id}")
             self.repo_dir = self.sandbox_dir / "src"
             self.repo_dir.mkdir(exist_ok=True, parents=True)
-           
-            logger.debug(f"Found {len(error_info_list)} in ticket {feature_id}")
-            
+
+            logger.debug(
+                f"Found {len(error_info_list)} in ticket {feature_id}")
+
             if len(error_info_list) == 0:
                 logger.warn("No error files found, skip")
                 return False
-            
+
             # 2. Check if the ticket is already in the pr list
-            logger.debug(f"Checking if the ticket {feature_id} is already in the pr list")
+            logger.debug(
+                f"Checking if the ticket {feature_id} is already in the pr list")
             assert self.gh_client, "Github client is not initialized"
             if self.gh_client.branch_exist_remote(f"fix/{feature_id}"):
-                logger.warn(f"Ticket {feature_id} is already in the pr list, skip")
+                logger.warn(
+                    f"Ticket {feature_id} is already in the pr list, skip")
                 return False
-            
+
             # 2. Clone repository
             try:
                 logger.debug(f"Cloning repository {self.repo_url}")
@@ -636,7 +671,7 @@ class CodeFixer:
                 logger.error(f"Failed to clone repository: {str(e)}")
                 self._destroy()
                 return False
-            
+
             # 3. Get source code of the error files
             issues_source_content = []
             for error_info in error_info_list:
@@ -649,7 +684,7 @@ class CodeFixer:
                 content = get_file_in_line(file_path, line)
                 print(f"File: {file_path}, Line: {line}, Content: {content}")
                 issues_source_content.append((file_path, line, content))
-                
+
             # Prepare prompt for the agent
             source_content_str = ""
             if len(issues_source_content) > 0:
@@ -657,7 +692,7 @@ class CodeFixer:
                     source_content_str += f"File: {file_path}@line {line} -> {content}\n"
             else:
                 source_content_str = "No source code found, please check the log message for the details."
-            
+
             USER_PROMPT = f"""
             Raw log message:
             {self.ticket.message}
@@ -665,7 +700,9 @@ class CodeFixer:
             Source codes:
             {source_content_str}
             """
-            
+
+            prepare_time = datetime.now() - start_time
+            start_time = datetime.now()
             # Call the analysis method and capture results
             analysis_result = self._analyze((
                 feature_id,
@@ -673,11 +710,14 @@ class CodeFixer:
                 source_content_str,
                 USER_PROMPT,
                 [],  # Pass the results array reference
-                "ANALYZE", # for agent to think next step
+                "ANALYZE",  # for agent to think next step
             ))
-            
+
+            agent_time = datetime.now() - start_time
+            start_time = datetime.now()
+
             print(f"Analysis result: {analysis_result}")
-            
+
             # If analysis is successful and has results, try to commit the fix
             if analysis_result and isinstance(analysis_result, list) and len(analysis_result) > 0:
                 # If there are code_changes, commit the fixes
@@ -688,15 +728,27 @@ class CodeFixer:
                         if details and details.get('code_changes'):
                             has_fixes = True
                             break
-                
+
                 if has_fixes:
                     logger.info("Code changes detected, committing fixes")
-                    self._commit_fix(analysis_result)
+                    self._commit_fix(analysis_result, timing={
+                        "create_at": self.ticket.created_at,
+                        "worker_start_at": start_at,
+
+                        "queue_wait_time": start_at - self.ticket.created_at,
+                        "prepare_time": prepare_time,
+                        "agent_time": agent_time,
+                        "repo_time": datetime.now() - start_time,
+                        "total_time": datetime.now() - start_at,
+                    })
                 else:
                     logger.info("No code changes detected, skipping commit")
             else:
-                logger.warning("No valid analysis results returned, skipping commit")
-            
+                logger.warning(
+                    "No valid analysis results returned, skipping commit")
+
+            repo_time = datetime.now() - start_time
+
             # cleanup the session
             self._destroy()
             return True

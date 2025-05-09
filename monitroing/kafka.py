@@ -1,29 +1,17 @@
-from io import TextIOWrapper
 from kafka import KafkaConsumer
 import json
-import logging
 import os
 import re
 from datetime import datetime
-from subprocess import Popen
-from pathlib import Path
 from agent.queue import CodeFixerQueue
 from monitroing.package import LogLevel, MessagePackage
 from tools.github import GithubRepoClient
-import tempfile
+from logger import logger
 
 
 ERROR_DIR = "errors"  
 os.makedirs(ERROR_DIR, exist_ok=True)
-
 queue = CodeFixerQueue()
-
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s',
-)
-
-logger = logging.getLogger(__name__)
 
 TIMESTAMP_LINE_RE = re.compile(r"^\[?\d{4}-\d{2}-\d{2}")     
 DATETIME_RE = re.compile(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}")  

@@ -12,17 +12,11 @@ import json
 from .pos import PosPointer
 from .package import MessagePackage
 from agent.queue import CodeFixerQueue
+from logger import logger
+
+
 #deinf pod type
 Pod = client.V1Pod
-
-#logger
-import logging
-logging.basicConfig(
-    level=logging.INFO,
-    handlers=[logging.StreamHandler()]
-)
-logger = logging.getLogger(__name__)
-
 threads = []
 v1 = None  # Will be initialized in watch_pod_logs
 
@@ -67,20 +61,20 @@ def watch_pod_logs(namespace, label_selector=None):
         since_seconds (int, optional): Get logs from the past X seconds
     """
     if not namespace:
-        print("❌ No namespace provided")
+        logger.error("❌ No namespace provided")
         raise ValueError("No namespace provided")
 
     # load kubeconfig config
     try:
         # try to load kubeconfig from local file
         config.load_kube_config()
-        print("✅ Get kubeconfig Context")
+        logger.info("✅ Get kubeconfig Context")
     except Exception:
         try:
             config.load_incluster_config()
-            print("✅ Get kubeconfig In Cluster")
+            logger.info("✅ Get kubeconfig In Cluster")
         except Exception as e:
-            print(f"❌ Failed to load Kubernetes config: {e}")
+            logger.error(f"❌ Failed to load Kubernetes config: {e}")
             sys.exit(1)
 
     # create Kubernetes API client
@@ -93,10 +87,10 @@ def watch_pod_logs(namespace, label_selector=None):
         pods = v1.list_namespaced_pod(namespace=namespace, label_selector=label_selector)
         pod_list.extend(pods.items)
         if not pod_list:
-            print(f"❌ No pods found matching label selector '{label_selector}'")
+            logger.warn(f"❌ No pods found matching label selector '{label_selector}'")
             sys.exit(1)
     except Exception as e:
-        print(f"❌ Unable to get pod list: {e}")
+        logger.error(f"❌ Unable to get pod list: {e}")
         sys.exit(1)
 
     class LogWorker(threading.Thread):
@@ -157,20 +151,19 @@ def watch_pod_logs(namespace, label_selector=None):
                     metadata["start_time"] = metadata["start_time"].isoformat()
                 
                 # Print metadata information
-                print(f"{Colors.HEADER}Pod Metadata: {pod_name}/{self.container}{Colors.ENDC}")
-                
-                print(f"{Colors.BLUE}Namespace: {metadata['namespace']}{Colors.ENDC}")
-                print(f"{Colors.BLUE}Node: {metadata['node_name']}{Colors.ENDC}")
-                print(f"{Colors.BLUE}Status: {metadata['phase']}{Colors.ENDC}")
-                print(f"{Colors.BLUE}Start Time: {metadata['start_time']}{Colors.ENDC}")
-                print(f"{Colors.BLUE}Image: {metadata['container_info'].get('image', 'N/A')}{Colors.ENDC}")
+                logger.debug(f"{Colors.HEADER}Pod Metadata: {pod_name}/{self.container}{Colors.ENDC}")
+                logger.debug(f"{Colors.BLUE}Namespace: {metadata['namespace']}{Colors.ENDC}")
+                logger.debug(f"{Colors.BLUE}Node: {metadata['node_name']}{Colors.ENDC}")
+                logger.debug(f"{Colors.BLUE}Status: {metadata['phase']}{Colors.ENDC}")
+                logger.debug(f"{Colors.BLUE}Start Time: {metadata['start_time']}{Colors.ENDC}")
+                logger.debug(f"{Colors.BLUE}Image: {metadata['container_info'].get('image', 'N/A')}{Colors.ENDC}")
 
                 if metadata['labels']:
-                    print(f"{Colors.BLUE}Labels: {json.dumps(metadata['labels'], ensure_ascii=False)}{Colors.ENDC}")
+                    logger.debug(f"{Colors.BLUE}Labels: {json.dumps(metadata['labels'], ensure_ascii=False)}{Colors.ENDC}")
                 
                 return metadata
             except Exception as e:
-                print(f"❌ Failed to get Pod metadata: {e}")
+                logger.error(f"❌ Failed to get Pod metadata: {e}")
                 return {
                     "pod_name": pod_name,
                     "namespace": namespace,
@@ -181,7 +174,7 @@ def watch_pod_logs(namespace, label_selector=None):
             try:
                 self.stream_logs()
             except Exception as e:
-                print(f"❌ Thread {self.name} encountered an error: {e}")
+                logger.error(f"❌ Thread {self.name} encountered an error: {e}")
                 # Don't re-raise the exception to keep the thread alive
 
         def stop(self) -> None:
@@ -204,7 +197,7 @@ def watch_pod_logs(namespace, label_selector=None):
                 logger.error(f'No container specified')
                 return
 
-            print(f"{Colors.HEADER}Starting to monitor logs for {namespace}/{pod_name}/{self.container}...{Colors.ENDC}")
+            logger.info(f"{Colors.HEADER}Starting to monitor logs for {namespace}/{pod_name}/{self.container}...{Colors.ENDC}")
             
             # multiline patterns
             log_prefix_pattern = re.compile(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} -')
@@ -235,7 +228,7 @@ def watch_pod_logs(namespace, label_selector=None):
                         _preload_content=False
                     )
                     
-                    print(f"{Colors.GREEN}Successfully connected to log stream for {namespace}/{pod_name}/{self.container}{Colors.ENDC}")
+                    logger.info(f"{Colors.GREEN}Successfully connected to log stream for {namespace}/{pod_name}/{self.container}{Colors.ENDC}")
 
                     # Read log stream in non-blocking mode
                     while not self._stop_event.is_set():
@@ -286,7 +279,7 @@ def watch_pod_logs(namespace, label_selector=None):
                                 # Handle read exceptions
                                 if not self._stop_event.is_set():
                                     # Only print error if not triggered by stop event
-                                    print(f"❌ Error reading log stream: {e}")
+                                    logger.error(f"❌ Error reading log stream: {e}")
                                     # Short sleep to avoid excessive CPU usage
                                     time.sleep(0.5)
                         else:
@@ -295,7 +288,7 @@ def watch_pod_logs(namespace, label_selector=None):
                             continue         
                 except client.ApiException as e:
                     if not self._stop_event.is_set():
-                        print(f"❌ API Error when monitoring log ({namespace}/{pod_name}/{self.container}): {e}")
+                        logger.error(f"❌ API Error when monitoring log ({namespace}/{pod_name}/{self.container}): {e}")
                         # Wait before retrying
                         time.sleep(5)
                         retry_count += 1
@@ -304,7 +297,7 @@ def watch_pod_logs(namespace, label_selector=None):
                             break
                 except Exception as e:
                     if not self._stop_event.is_set():
-                        print(f"❌ Unknown Error: {e}")
+                        logger.error(f"❌ Unknown Error: {e}")
                         # Wait before retrying
                         time.sleep(5)
                 finally:
@@ -318,7 +311,7 @@ def watch_pod_logs(namespace, label_selector=None):
                     # Ensure error file is closed
                     if self.err_file and not self.err_file.closed:
                         self.err_file.close()
-                    print(f"{Colors.RED}Log stream for {namespace}/{pod_name}/{self.container} closed{Colors.ENDC}")
+                    logger.warn(f"{Colors.RED}Log stream for {namespace}/{pod_name}/{self.container} closed{Colors.ENDC}")
 
     # Create a thread for each pod to monitor logs
     for pod in pod_list:
@@ -328,13 +321,13 @@ def watch_pod_logs(namespace, label_selector=None):
 
     [thread.start() for thread in threads]
     
-    print(f"✅ {Colors.GREEN} {len(threads)} log monitoring threads have been started{Colors.ENDC}")    
+    logger.info(f"✅ {Colors.GREEN} {len(threads)} log monitoring threads have been started{Colors.ENDC}")
 
 def stop_all_threads():
     """
     Stop all threads
     """
-    print("Stopping all log monitoring threads...")
+    logger.info("Stopping all log monitoring threads...")
     for thread in threads:
         if thread.is_alive():
             thread.stop()
@@ -344,10 +337,10 @@ def stop_all_threads():
         if threads[index].is_alive():
             threads[index].join(timeout=2)
             if threads[index].is_alive():
-                print(f"❌ Thread {threads[index].name} is still running, attempting to force terminate...")
+                logger.error(f"❌ Thread {threads[index].name} is still running, attempting to force terminate...")
                 threads[index].terminate()
     
     threads.clear()
     
-    print("✅ All log monitoring threads have been stopped")
+    logger.info("✅ All log monitoring threads have been stopped")
                 
