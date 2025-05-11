@@ -7,12 +7,11 @@ import shutil
 import git
 from openai import OpenAI
 import requests
-import logging
 from pathlib import Path
 from datetime import datetime, time
 
 from monitroing.package import MessagePackage
-from tools.file import get_content_from_file, get_file_in_line
+from tools.file import get_file_in_line
 from tools.github import GithubRepoClient
 
 # Required environment variables:
@@ -56,8 +55,7 @@ class CodeFixer:
                 "GITHUB_TOKEN not set, git operations may require manual authentication")
 
         self.gh_client = GithubRepoClient(self.repo_url)
-        self.agent = OpenAI(api_key=str(
-            os.getenv("AGENT_API_KEY")), base_url="https://api.deepseek.com")
+        self.agent = OpenAI(api_key=str(os.getenv("AGENT_API_KEY")), base_url="https://api.deepseek.com")
 
         # Path mapping rules (container path -> local path)
         self.path_mapping = {
@@ -252,16 +250,44 @@ class CodeFixer:
             Previous context will be provided as:
             {context}
 
+            Previous analysis steps:
+            {previous_steps}
+
             Respond with your analysis steps until reaching TERMINATE.
             """
 
             try:
+                # Format previous analysis steps for the prompt
+                previous_steps = ""
+                if analysis_results:
+                    previous_steps = "Previous analysis steps:\n"
+                    for i, result in enumerate(analysis_results, 1):
+                        previous_steps += f"\nStep {i}:\n"
+                        previous_steps += f"Thought: {result.get('thought', 'N/A')}\n"
+                        previous_steps += f"Action: {result.get('action', 'N/A')}\n"
+                        if result.get('details'):
+                            details = result.get('details', {})
+                            previous_steps += f"Explanation: {details.get('explanation', 'N/A')}\n"
+                            if details.get('code_changes'):
+                                previous_steps += "Code Changes:\n"
+                                for change in details.get('code_changes', []):
+                                    previous_steps += f"- {change.get('file_path')}:{change.get('line')}: {change.get('explanation')}\n"
+                            if details.get('tests'):
+                                previous_steps += f"Tests: {details.get('tests')}\n"
+                            if details.get('prevention'):
+                                previous_steps += f"Prevention: {details.get('prevention')}\n"
+                        previous_steps += f"Next: {result.get('next', 'N/A')}\n"
+
                 # start thinking
+                model = os.getenv('AGENT_MODEL')
+                if not model:
+                    model = "deepseek-chat"
+                logger.info(f"Using model: {model} for analysis")
                 response = self.agent.chat.completions.create(
-                    model="deepseek-chat",
+                    model=model,
                     messages=[
                         {"role": "system", "content": STEP_PROMPT},
-                        {"role": "user", "content": f"Previous context: {context}"},
+                        {"role": "user", "content": f"Previous context: {context}\n\n{previous_steps}"},
                     ],
                     stream=False
                 )
@@ -477,6 +503,8 @@ class CodeFixer:
 {code_changes_info}
 
 ## Analysis Details
+
+Agent Model: {os.getenv('AGENT_MODEL') if os.getenv('AGENT_MODEL') else "deepseek-chat"}
 
 ```json
 {json.dumps(analysis_results, indent=2)}
