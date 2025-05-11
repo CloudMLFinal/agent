@@ -37,14 +37,15 @@ def create_kafka_consumer(topic_name: str, group_id: str | None = None) -> Kafka
 
 
 def start_consuming(topic_name: str, group_id: str | None = None) -> None:
-    """Consume messages; for each ERROR/CRITICAL block write a separate txt"""
     consumer = create_kafka_consumer(topic_name, group_id)
     logger.info(f"Started consuming messages from topic: {topic_name}")
 
     in_error_block = False
-    error_buffer: str = ""
-    
-    # Initialize GitHub client
+    error_buffer = ""
+    last_error_time = None
+    MAX_LINES = 100 
+    error_line_count = 0
+
     repo_url = os.getenv("SOURCE_REPO")
     assert repo_url, "SOURCE_REPO must be set"
     github_client = GithubRepoClient(repo_url)
@@ -54,34 +55,40 @@ def start_consuming(topic_name: str, group_id: str | None = None) -> None:
             try:
                 data = json.loads(msg.value.decode("utf-8"))
                 log_line = data.get("log", "")
-            except Exception as exc:   
+            except Exception as exc:
                 logger.error(f"Bad message, skip: {exc}")
                 continue
 
-            if not in_error_block and (" ERROR " in log_line or " CRITICAL " in log_line):
-                ts_match = DATETIME_RE.search(log_line)
-                ts_str = (
-                    ts_match.group(0).replace("-", "").replace(":", "").replace(" ", "_")
-                    if ts_match
-                    else datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-                )
-                error_buffer = log_line + "\n"
+            if not in_error_block and ("ERROR" in log_line or "CRITICAL" in log_line):
                 in_error_block = True
+                error_buffer = log_line + "\n"
+                error_line_count = 1
                 continue
 
+     
             if in_error_block:
-                if not TIMESTAMP_LINE_RE.match(log_line):
-                    error_buffer += log_line + "\n"
-
-                if TIMESTAMP_LINE_RE.match(log_line) and (
-                    " ERROR " not in log_line and " CRITICAL " not in log_line
-                ):
-                    logger.info(f"Analyzing error: {error_buffer}")
+              
+                if TIMESTAMP_LINE_RE.match(log_line) and not ("ERROR" in log_line or "CRITICAL" in log_line):
+                    logger.info(f"Analyzing error:\n{error_buffer}")
                     queue.submit_job(MessagePackage({}, error_buffer, LogLevel.ERROR))
                     in_error_block = False
                     error_buffer = ""
+                    error_line_count = 0
+                else:
+                    error_buffer += log_line + "\n"
+                    error_line_count += 1
+            
+                    if error_line_count > MAX_LINES:
+                        logger.warning(f"Max line reached for error block. Auto-submitting:\n{error_buffer}")
+                        queue.submit_job(MessagePackage({}, error_buffer, LogLevel.ERROR))
+                        in_error_block = False
+                        error_buffer = ""
+                        error_line_count = 0
                 continue
+
+       
             print(log_line.strip())
+
     except KeyboardInterrupt:
         logger.info("Stopping the consumer...")
     finally:
