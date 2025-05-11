@@ -158,8 +158,15 @@ class CodeFixer:
         return response.json()['choices'][0]['message']['content']
 
     def _analyze(self, context):
+        
         """Analyze error using DeepSeek API"""
         id, raw_message, source_content, prompt, analysis_results, CMD = context
+        if isinstance(analysis_results, dict):
+            logger.warning("Wrapping analysis_results dict into list")
+            analysis_results = [analysis_results]
+        elif not isinstance(analysis_results, list):
+            logger.warning(f"Unexpected analysis_results type: {type(analysis_results)}; initializing empty list")
+            analysis_results = []
 
         print(f"Analyzing analysis_results: {analysis_results}")
 
@@ -258,24 +265,41 @@ class CodeFixer:
 
             try:
                 # Format previous analysis steps for the prompt
+                # Format previous analysis steps for the prompt
                 previous_steps = ""
+
+              
+                if isinstance(analysis_results, dict):
+                    logger.warning("Wrapping analysis_results dict into list")
+                    analysis_results = [analysis_results]
+                elif not isinstance(analysis_results, list):
+                    logger.warning(f"Unexpected analysis_results type: {type(analysis_results)}; initializing empty list")
+                    analysis_results = []
+
                 if analysis_results:
                     previous_steps = "Previous analysis steps:\n"
                     for i, result in enumerate(analysis_results, 1):
+                        if not isinstance(result, dict):
+                            logger.warning(f"Invalid step format at index {i}, skipping: {result}")
+                            continue
+
                         previous_steps += f"\nStep {i}:\n"
                         previous_steps += f"Thought: {result.get('thought', 'N/A')}\n"
                         previous_steps += f"Action: {result.get('action', 'N/A')}\n"
-                        if result.get('details'):
-                            details = result.get('details', {})
+
+                        details = result.get('details', {})
+                        if isinstance(details, dict):
                             previous_steps += f"Explanation: {details.get('explanation', 'N/A')}\n"
-                            if details.get('code_changes'):
+                            if 'code_changes' in details:
                                 previous_steps += "Code Changes:\n"
                                 for change in details.get('code_changes', []):
-                                    previous_steps += f"- {change.get('file_path')}:{change.get('line')}: {change.get('explanation')}\n"
-                            if details.get('tests'):
+                                    if isinstance(change, dict):
+                                        previous_steps += f"- {change.get('file_path')}:{change.get('line')}: {change.get('explanation')}\n"
+                            if 'tests' in details:
                                 previous_steps += f"Tests: {details.get('tests')}\n"
-                            if details.get('prevention'):
+                            if 'prevention' in details:
                                 previous_steps += f"Prevention: {details.get('prevention')}\n"
+
                         previous_steps += f"Next: {result.get('next', 'N/A')}\n"
 
                 # start thinking
@@ -308,10 +332,36 @@ class CodeFixer:
                     content = content[:-3]  # Remove ```
                 content = content.strip()
 
-                # Parse the JSON
-                analysis_data = json.loads(content)
+                try:
+                    # Try loading as is
+                    analysis_data = json.loads(content)
+                except json.JSONDecodeError as e:
+                    # If it fails, try extracting first JSON object
+                    logger.warning(f"Trying to extract first JSON object due to parse error: {e}")
+                    start = content.find('{')
+                    end = content.rfind('}')
+                    if start != -1 and end != -1 and end > start:
+                        try:
+                            analysis_data = json.loads(content[start:end + 1])
+                        except json.JSONDecodeError as e2:
+                            logger.error(f"Failed to decode extracted JSON block: {e2}")
+                            return analysis_results
+                    else:
+                        logger.error("No valid JSON object found in response")
+                        return analysis_results
 
-                # Extract the information
+                # If it's a list, pick the first valid dict item
+                if isinstance(analysis_data, list):
+                    if len(analysis_data) > 0 and isinstance(analysis_data[0], dict):
+                        analysis_data = analysis_data[0]
+                    else:
+                        logger.error(f"Invalid list format returned: {analysis_data}")
+                        return analysis_results
+                elif not isinstance(analysis_data, dict):
+                    logger.error(f"Unexpected response format: {type(analysis_data)}")
+                    return analysis_results
+
+                # Now safe to extract fields
                 thought = analysis_data.get('thought', '')
                 action = analysis_data.get('action', '')
                 details = analysis_data.get('details', {})
