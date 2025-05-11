@@ -1,13 +1,11 @@
 from github import Github
 from github import Auth
 import os
-import logging
 import re
 import hashlib
 from pathlib import Path
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+from logger import logger
 
 class GithubRepoClient:
     def __init__(self, repo_url: str):

@@ -2,8 +2,6 @@ from fastapi import FastAPI, Response
 from fastapi.responses import JSONResponse
 from monitroing.k8s import get_worker_status
 
-from logger import logger
-
 app = FastAPI()
 
 # 全局状态变量

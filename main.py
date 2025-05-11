@@ -1,4 +1,3 @@
-import logging
 import os
 import time
 from dotenv import load_dotenv
@@ -8,10 +7,7 @@ from monitroing.health import app, set_ready
 import argparse
 import uvicorn
 import threading
-import asyncio
-
-logging.basicConfig(level=logging.INFO, handlers=[logging.StreamHandler()])
-logger = logging.getLogger(__name__)
+from logger import logger
 
 
 def start_health_server(port: int = 8000):
